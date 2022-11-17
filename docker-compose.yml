@@ -1,0 +1,162 @@
+version: "3.7"
+
+services:
+
+#Grafana,Prometheus and Node-Exporter for the metrics monitoring
+
+  grafana:
+    image: grafana/grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - "GF_SECURITY_ADMIN_PASSWORD=Password1"
+    volumes:
+      - ./grafana-storage:/var/lib/grafana
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini
+    user: "0"
+    networks:
+      - grafana
+
+
+  prometheus:
+    image: prom/prometheus
+    restart: unless-stopped
+    ports:
+      - 9090:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus-data:/var/lib/prometheus
+      - ./prometheus/recording-rules.yml:/etc/prometheus/recording-rules.yml
+      - ./prometheus/alerting-rules.yml:/etc/prometheus/alerting-rules.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - '--web.external-url=http://34.241.12.208:9090'
+    depends_on:
+      - alertmanager
+    networks:
+      - grafana
+
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    ports:
+      - 9100:9100
+    networks:
+      - grafana
+
+#ELK stack core components for the Logs monitoring
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.8.1
+    restart: unless-stopped
+    volumes:
+        - elasticsearch-data:/usr/share/elasticsearch/data
+        - elasticsearch-backup:/usr/share/elasticsearch/backup
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      - elk
+    mem_limit: 5g
+    environment:
+      - cluster.name=es-docker
+      - node.name=node1
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:6.8.1
+    restart: unless-stopped
+    volumes:
+      - ./kibana-data:/usr/share/kibana/data
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    user: "0"
+    networks:
+      - elk
+    mem_limit: 3g
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:6.8.1
+    restart: unless-stopped
+    ports:
+      - "9600:9600"
+      - "5044:5044"
+    volumes:
+      - ./logstash:/etc/logstash/logstash.conf
+    command: logstash -f /etc/logstash/logstash.conf
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk
+    mem_limit: 2g
+    environment:
+        - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+
+#Alerting tools for Elastic Search(Logs)  and Prometheus(Metrics)
+  elastalert:
+    image: bitsensor/elastalert:3.0.0-beta.0
+    volumes:
+      - type: bind
+        source: /home/ubuntu/etc/elastalert/config/elastalert.yaml
+        target: /opt/elastalert/config.yaml
+      - type: bind
+        source: /home/ubuntu/etc/elastalert/config/config.json
+        target: /opt/elastalert-server/config/config.json
+      - type: bind
+        source: /home/ubuntu/etc/elastalert/rules
+        target: /opt/elastalert/rules
+      - type: bind
+        source: /home/ubuntu/etc/elastalert/config/smtp-auth.yml
+        target: /opt/elastalert/smtp-auth.yml
+    networks:
+      - elk
+    user: "0"
+
+  alertmanager:
+    image: quay.io/prometheus/alertmanager
+    container_name: alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager-email-config.yml'
+      - '--log.level=error'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://34.241.12.208:9093'
+    volumes:
+      - ./alertmanager/alertmanager-fallback-config.yml:/etc/alertmanager/config.yml
+      - ./alertmanager/alertmanager-email-config.yml:/etc/alertmanager/alertmanager-email-config.yml
+    #  - ./alertmanager/alertmanager-slack-config.yml:/etc/alermanager/alertmanager-slack-config.yml
+    ports:
+      - 9093:9093
+    networks:
+      - grafana
+
+#Prometheus MS-teams tool
+  prom2teams:
+    image: idealista/prom2teams:2.7.0
+    restart: unless-stopped
+    environment:
+      PROM2TEAMS_CONNECTOR: 'https://altrongroup.webhook.office.com/webhookb2/598e5ed3-4309-468e-a0c5-80f22257b4b4@2ae977fc-238e-491f-ba43-5095e226806b/IncomingWebhook/d2328bc72d9d40d0806ed5ff8a6fa78f/3b5b5c78-001f-40b8-bae5-a05fffeae8f1'
+    ports:
+      - 8089:8089
+
+
+networks:
+  elk:
+  grafana:
+volumes:
+  grafana-storage:
+  prometheus-data:
+  elasticsearch-data:
+  elasticsearch-backup:
+  alertmanager-data:
